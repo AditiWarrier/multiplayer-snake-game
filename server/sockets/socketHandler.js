@@ -1,251 +1,333 @@
 const rooms = {};
 
-// 🎨 Random color
-function getRandomColor() {
-  const colors = ["green", "blue", "red", "yellow"];
-  return colors[Math.floor(Math.random() * colors.length)];
+const GRID_SIZE = 30;
+const COLORS = ["#00ff88", "#00cfff", "#ff4d6d", "#ffd60a", "#c77dff", "#ff9a3c"];
+
+function getColor(index) {
+  return COLORS[index % COLORS.length];
 }
 
-// 🔢 Room code
 function generateRoomCode() {
   const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
   let code = "";
-  for (let i = 0; i < 5; i++) {
-    code += chars[Math.floor(Math.random() * chars.length)];
-  }
+  for (let i = 0; i < 5; i++) code += chars[Math.floor(Math.random() * chars.length)];
   return code;
 }
 
+function spawnFood(room) {
+  let pos;
+  do {
+    pos = {
+      x: Math.floor(Math.random() * GRID_SIZE),
+      y: Math.floor(Math.random() * GRID_SIZE)
+    };
+  } while (
+    Object.values(room.snakes).some(s =>
+      s.alive && s.body.some(b => b.x === pos.x && b.y === pos.y)
+    )
+  );
+  return pos;
+}
+
+function getStartPositions() {
+  return [
+    { x: 5, y: 5 },
+    { x: 24, y: 24 },
+    { x: 5, y: 24 },
+    { x: 24, y: 5 }
+  ];
+}
+
+function broadcastState(io, roomCode) {
+  const room = rooms[roomCode];
+  if (!room) {
+    console.log("BROADCAST FAILED: Room not found", roomCode);
+    return;
+  }
+
+  const state = {
+    snakes: room.snakes,
+    food: room.food,
+    foodTrail: room.foodTrail || [],
+    scores: room.scores,
+    gameOver: room.gameOver,
+    winner: room.winner
+  };
+
+  console.log("EMIT STATE:", roomCode, "SNAKES:", Object.keys(room.snakes), "PLAYERS:", room.players.length);
+  io.to(roomCode).emit("gameState", state);
+}
+
 function socketHandler(io) {
-
   io.on("connection", (socket) => {
-
-    console.log("User connected:", socket.id);
-
-    // track which room this socket belongs to
+    console.log("Connected:", socket.id);
     socket.roomCode = null;
 
-    // =========================
-    // CREATE ROOM
-    // =========================
     socket.on("createRoom", () => {
-
       const roomCode = generateRoomCode();
+      console.log("CREATE ROOM:", socket.id, roomCode);
 
       rooms[roomCode] = {
         players: [],
         snakes: {},
-        food: { x: 10, y: 10 },
-        interval: null
+        food: { x: 15, y: 15 },
+        scores: {},
+        interval: null,
+        started: false,
+        gameOver: false,
+        winner: null,
+        foodTrail: []
       };
 
-      rooms[roomCode].players.push({ id: socket.id });
+      rooms[roomCode].players.push({ id: socket.id, colorIndex: 0 });
 
       rooms[roomCode].snakes[socket.id] = {
-        body: [{ x: 5, y: 5 }],
+        body: [getStartPositions()[0]],
         direction: "RIGHT",
-        color: getRandomColor()
+        color: getColor(0),
+        alive: true
       };
+
+      rooms[roomCode].scores[socket.id] = 0;
 
       socket.join(roomCode);
       socket.roomCode = roomCode;
+      console.log("JOIN:", socket.id, roomCode, "socket.roomCode SET");
 
       socket.emit("roomCreated", roomCode);
-
-      io.to(roomCode).emit("gameState", {
-        snakes: rooms[roomCode].snakes,
-        food: rooms[roomCode].food
-      });
-
-      console.log("Room created:", roomCode);
+      broadcastState(io, roomCode);
     });
 
-    // =========================
-    // JOIN ROOM
-    // =========================
     socket.on("joinRoom", (roomCode) => {
-
       const room = rooms[roomCode];
-      if (!room) return;
+      if (!room) {
+        console.log("JOIN ROOM FAILED: Room not found", socket.id, roomCode);
+        return;
+      }
 
-      if (room.players.length >= 4) return;
+      // Already a player — just re-join the socket.io room (page navigation)
+      if (room.players.some(p => p.id === socket.id)) {
+        console.log("RE-JOIN EXISTING:", socket.id, roomCode);
+        socket.join(roomCode);
+        socket.roomCode = roomCode;
+        broadcastState(io, roomCode);
+        return;
+      }
 
-      if (room.players.some(p => p.id === socket.id)) return;
+      if (room.players.length >= 4) {
+        console.log("JOIN ROOM FAILED: Room full", socket.id, roomCode);
+        return;
+      }
 
-      room.players.push({ id: socket.id });
+      const colorIndex = room.players.length;
+      console.log("NEW PLAYER JOIN:", socket.id, roomCode, "COLOR:", colorIndex);
+
+      room.players.push({ id: socket.id, colorIndex });
 
       room.snakes[socket.id] = {
-        body: [{
-          x: Math.floor(Math.random() * 10),
-          y: Math.floor(Math.random() * 10)
-        }],
+        body: [getStartPositions()[colorIndex]],
         direction: "RIGHT",
-        color: getRandomColor()
+        color: getColor(colorIndex),
+        alive: true
       };
+
+      room.scores[socket.id] = 0;
+      console.log("SNAKES AFTER JOIN:", Object.keys(room.snakes));
 
       socket.join(roomCode);
       socket.roomCode = roomCode;
+      console.log("JOIN:", socket.id, roomCode, "socket.roomCode SET");
 
-      io.to(roomCode).emit("gameState", {
-        snakes: room.snakes,
-        food: room.food
-      });
-
-      console.log("Player joined:", roomCode);
+      broadcastState(io, roomCode);
     });
 
-    // =========================
-    // GET STATE (VERY IMPORTANT)
-    // =========================
     socket.on("getState", (roomCode) => {
-
       const room = rooms[roomCode];
-      if (!room) return;
-
-      socket.emit("gameState", {
-        snakes: room.snakes,
-        food: room.food
-      });
-
-    });
-
-    // =========================
-    // PLAYER INPUT
-    // =========================
-    socket.on("move", (direction) => {
-
-      const roomCode = socket.roomCode;
-      const room = rooms[roomCode];
-      if (!room) return;
-
-      const snake = room.snakes[socket.id];
-      if (!snake) return;
-
-      const current = snake.direction;
-
-      if (
-        (direction === "UP" && current !== "DOWN") ||
-        (direction === "DOWN" && current !== "UP") ||
-        (direction === "LEFT" && current !== "RIGHT") ||
-        (direction === "RIGHT" && current !== "LEFT")
-      ) {
-        snake.direction = direction;
+      if (!room) {
+        console.log("GET STATE FAILED: Room not found", socket.id, roomCode);
+        return;
       }
 
+      console.log("GET STATE:", socket.id, roomCode, "CURRENT SNAKES:", Object.keys(room.snakes));
+
+      // Re-join socket.io room (handles page navigation losing context)
+      socket.join(roomCode);
+      socket.roomCode = roomCode;
+      console.log("GET STATE - JOINED ROOM:", socket.id, roomCode);
+
+      // If socket is a known player but snake is missing, restore it
+      const playerEntry = room.players.find(p => p.id === socket.id);
+      if (playerEntry && !room.snakes[socket.id]) {
+        console.log("RESTORING MISSING SNAKE FOR:", socket.id);
+        room.snakes[socket.id] = {
+          body: [getStartPositions()[playerEntry.colorIndex]],
+          direction: "RIGHT",
+          color: getColor(playerEntry.colorIndex),
+          alive: !room.started // If game started, dead snake; otherwise alive
+        };
+        room.scores[socket.id] = room.scores[socket.id] || 0;
+        console.log("SNAKES AFTER RESTORE:", Object.keys(room.snakes));
+      }
+
+      // Broadcast to everyone so all boards refresh
+      broadcastState(io, roomCode);
     });
 
-    // =========================
-    // START GAME
-    // =========================
+    socket.on("move", (direction) => {
+      const room = rooms[socket.roomCode];
+      if (!room) {
+        console.log("MOVE FAILED: No room for socket", socket.id, socket.roomCode);
+        return;
+      }
+
+      const snake = room.snakes[socket.id];
+      if (!snake || !snake.alive) {
+        console.log("MOVE FAILED: No snake or dead", socket.id);
+        return;
+      }
+
+      const opposites = { UP: "DOWN", DOWN: "UP", LEFT: "RIGHT", RIGHT: "LEFT" };
+
+      if (opposites[direction] !== snake.direction) {
+        snake.direction = direction;
+        console.log("MOVE:", socket.id, direction, "ROOM:", socket.roomCode);
+      }
+    });
+
     socket.on("startGame", (roomCode) => {
-
       const room = rooms[roomCode];
-      if (!room) return;
+      if (!room || room.interval) return;
 
-      // 🔥 SEND STATE IMMEDIATELY (fix blank board)
-      io.to(roomCode).emit("gameState", {
-        snakes: room.snakes,
-        food: room.food
-      });
+      console.log("START GAME:", roomCode, "SNAKES IN GAME:", Object.keys(room.snakes));
+      room.started = true;
 
-      // prevent duplicate loops
-      if (room.interval) return;
+      io.to(roomCode).emit("gameStarted");
+
+// 🔥 FORCE FULL STATE PUSH IMMEDIATELY
+broadcastState(io, roomCode);
 
       room.interval = setInterval(() => {
+        console.log("LOOP PLAYERS:", Object.keys(room.snakes));
+        const deaths = [];
+        console.log("GAME LOOP TICK - SNAKES:", Object.keys(room.snakes));
 
         for (const id in room.snakes) {
-
           const snake = room.snakes[id];
+          if (!snake.alive) continue;
+
           const head = { ...snake.body[0] };
 
-          // movement
           if (snake.direction === "UP") head.y -= 1;
           if (snake.direction === "DOWN") head.y += 1;
           if (snake.direction === "LEFT") head.x -= 1;
           if (snake.direction === "RIGHT") head.x += 1;
 
-          // wrap walls
-          if (head.x < 0) head.x = 19;
-          if (head.x >= 20) head.x = 0;
-          if (head.y < 0) head.y = 19;
-          if (head.y >= 20) head.y = 0;
+          head.x = (head.x + GRID_SIZE) % GRID_SIZE;
+          head.y = (head.y + GRID_SIZE) % GRID_SIZE;
+
+          const selfHit = snake.body.slice(1).some(b => b.x === head.x && b.y === head.y);
+
+          let otherHit = false;
+          for (const otherId in room.snakes) {
+            if (otherId === id) continue;
+            const other = room.snakes[otherId];
+            if (!other.alive) continue;
+            if (other.body.some(b => b.x === head.x && b.y === head.y)) {
+              otherHit = true;
+              break;
+            }
+          }
+
+          if (selfHit || otherHit) {
+            deaths.push(id);
+            continue;
+          }
 
           snake.body.unshift(head);
 
-          // food
           if (head.x === room.food.x && head.y === room.food.y) {
-            room.food = {
-              x: Math.floor(Math.random() * 20),
-              y: Math.floor(Math.random() * 20)
-            };
+            room.scores[id] += 1;
+            room.food = spawnFood(room);
           } else {
             snake.body.pop();
           }
-
         }
 
-        io.to(roomCode).emit("gameState", {
-          snakes: room.snakes,
-          food: room.food
+        deaths.forEach(id => {
+          const snake = room.snakes[id];
+          snake.alive = false;
+          snake.body.forEach((seg, i) => {
+            if (i % 2 === 0) room.foodTrail.push(seg);
+          });
+          snake.body = [];
         });
 
-      }, 200);
+        const alive = Object.keys(room.snakes).filter(id => room.snakes[id].alive);
 
-      io.to(roomCode).emit("gameStarted");
+        if (alive.length <= 1 && Object.keys(room.snakes).length > 1) {
+          room.gameOver = true;
+          room.winner = alive[0] || null;
+        }
 
-      console.log("Game started:", roomCode);
+        broadcastState(io, roomCode);
+
+      }, 150);
     });
 
-    // =========================
-    // LEAVE ROOM
-    // =========================
-    socket.on("leaveRoom", () => {
-
-      const roomCode = socket.roomCode;
+    socket.on("leaveRoom", (roomCode) => {
       const room = rooms[roomCode];
       if (!room) return;
-
-      delete room.snakes[socket.id];
-      room.players = room.players.filter(p => p.id !== socket.id);
 
       socket.leave(roomCode);
       socket.roomCode = null;
 
-      io.to(roomCode).emit("gameState", {
-        snakes: room.snakes,
-        food: room.food
-      });
+      // Remove player from room if they're in it
+      const playerIndex = room.players.findIndex(p => p.id === socket.id);
+      if (playerIndex !== -1) {
+        room.players.splice(playerIndex, 1);
+        delete room.snakes[socket.id];
+        delete room.scores[socket.id];
+      }
 
+      broadcastState(io, roomCode);
+
+      if (room.players.length === 0) {
+        console.log("Room empty, delaying deletion:", roomCode);
+
+        setTimeout(() => {
+          if (rooms[roomCode] && rooms[roomCode].players.length === 0) {
+            console.log("Deleting room after delay:", roomCode);
+            clearInterval(rooms[roomCode].interval);
+            delete rooms[roomCode];
+          }
+        }, 10000);
+      }
     });
 
-    // =========================
-    // DISCONNECT
-    // =========================
     socket.on("disconnect", () => {
-
       const roomCode = socket.roomCode;
       const room = rooms[roomCode];
       if (!room) return;
 
       delete room.snakes[socket.id];
+      delete room.scores[socket.id];
       room.players = room.players.filter(p => p.id !== socket.id);
 
-      io.to(roomCode).emit("gameState", {
-        snakes: room.snakes,
-        food: room.food
-      });
+      broadcastState(io, roomCode);
 
       if (room.players.length === 0) {
-        clearInterval(room.interval);
-        delete rooms[roomCode];
+        console.log("Room empty, delaying deletion:", roomCode);
+
+        setTimeout(() => {
+          if (rooms[roomCode] && rooms[roomCode].players.length === 0) {
+            console.log("Deleting room after delay:", roomCode);
+            clearInterval(rooms[roomCode].interval);
+            delete rooms[roomCode];
+          }
+        }, 10000);
       }
-
-      console.log("User disconnected:", socket.id);
-
     });
-
   });
-
 }
 
 module.exports = socketHandler;
