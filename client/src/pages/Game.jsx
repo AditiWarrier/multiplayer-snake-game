@@ -1,93 +1,166 @@
 import { useEffect, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import Navbar from "../components/Navbar";
 import GameBoard from "../components/GameBoard";
-import socket from "../socket"; // 🔥 MISSING BEFORE
+import socket from "../socket";
 
 export default function Game() {
+  const [searchParams] = useSearchParams();
+  const roomCode = searchParams.get("code");
 
   const [players, setPlayers] = useState([]);
+  const [scores, setScores] = useState({});
 
   useEffect(() => {
+    if (roomCode) {
+      socket.setRoomCode(roomCode);
+      socket.emit("joinRoom", roomCode);
+      socket.emit("getState", roomCode);
+    }
 
-  const roomCode = new URLSearchParams(window.location.search).get("code");
+    const handleGameState = (state) => {
+      const snakeIds = Object.keys(state.snakes || {});
 
-  if (roomCode) {
-    socket.emit("joinRoom", roomCode);   // 🔥 ADD THIS
-    socket.emit("getState", roomCode);
-  }
+      const formatted = snakeIds.map((id, index) => ({
+        id,
+        name: index === 0 ? "Host" : `Player ${index + 1}`,
+        color: state.snakes[id]?.color,
+        alive: state.snakes[id]?.alive
+      }));
 
-  const handleGameState = (state) => {
+      setPlayers(formatted);
+      setScores(state.scores || {});
+    };
 
-    const snakeIds = Object.keys(state.snakes || {});
+    socket.on("gameState", handleGameState);
 
-    const formatted = snakeIds.map((id, index) => ({
-      name: index === 0 ? "Host" : `Player ${index + 1}`,
-      id
-    }));
+    return () => {
+      socket.off("gameState", handleGameState);
+    };
+  }, [roomCode]);
 
-    setPlayers(formatted);
+  const sortedPlayers = [...players].sort(
+    (a, b) => (scores[b.id] || 0) - (scores[a.id] || 0)
+  );
+
+  const colorDot = (color, alive) => (
+    <span
+      style={{
+        display: "inline-block",
+        width: 10,
+        height: 10,
+        borderRadius: "50%",
+        background: alive ? color : "#333",
+        boxShadow: alive ? `0 0 6px ${color}` : "none",
+        marginRight: 10,
+        flexShrink: 0
+      }}
+    />
+  );
+
+  const panelStyle = {
+    background: "#111118",
+    border: "1px solid #1a1a2e",
+    borderRadius: "4px",
+    padding: "1.25rem",
+    width: 180
   };
 
-  socket.on("gameState", handleGameState);
-
-  return () => {
-    socket.off("gameState", handleGameState);
+  const labelStyle = {
+    color: "#444",
+    fontSize: "0.65rem",
+    letterSpacing: "0.25em",
+    marginBottom: "0.75rem"
   };
-
-}, []);
 
   return (
-    <div className="min-h-screen bg-gray-100">
-
+    <div className="min-h-screen" style={{ background: "#0a0a0f", color: "#e0e0e0", fontFamily: "'Courier New', monospace" }}>
       <Navbar />
 
-      <div className="flex justify-center mt-10 gap-8 px-6">
+      <div style={{ display: "flex", justifyContent: "center", alignItems: "flex-start", gap: "1.5rem", padding: "2rem 1rem", flexWrap: "wrap" }}>
 
-        {/* LEFT PANEL */}
-        <div className="w-60 bg-white shadow rounded-xl p-4">
+        <div style={panelStyle}>
+          <div style={labelStyle}>PLAYERS</div>
 
-          <h2 className="text-lg font-semibold mb-4">
-            Players
-          </h2>
-
-          <ul className="space-y-2">
-            {players.map((player, index) => (
-              <li key={index} className="border p-2 rounded">
-                {player.name}
-              </li>
-            ))}
-          </ul>
-
-        </div>
-
-        {/* CENTER */}
-        <div>
-          <GameBoard />
-        </div>
-
-        {/* RIGHT PANEL */}
-        <div className="w-60 bg-white shadow rounded-xl p-4">
-
-          <h2 className="text-lg font-semibold mb-4">
-            Scoreboard
-          </h2>
-
-          <ul className="space-y-2">
-            {players.map((player, index) => (
+          <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "flex", flexDirection: "column", gap: 8 }}>
+            {players.map((p) => (
               <li
-                key={index}
-                className="border p-2 rounded flex justify-between"
+                key={p.id}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  padding: "8px 10px",
+                  background: p.id === socket.id ? "#0d1a14" : "#0d0d16",
+                  border: `1px solid ${p.id === socket.id ? "#00ff8822" : "#111"}`,
+                  borderRadius: "3px",
+                  opacity: p.alive ? 1 : 0.4
+                }}
               >
-                <span>{player.name}</span>
-                <span>0</span>
+                {colorDot(p.color, p.alive)}
+                <span style={{ fontSize: "0.8rem" }}>{p.name}</span>
+                {!p.alive && (
+                  <span style={{ color: "#444", fontSize: "0.65rem", marginLeft: "auto" }}>
+                    DEAD
+                  </span>
+                )}
               </li>
             ))}
           </ul>
 
+          <div style={{ marginTop: "1.5rem", borderTop: "1px solid #1a1a1a", paddingTop: "1rem" }}>
+            <div style={labelStyle}>ROOM</div>
+            <div style={{ color: "#ffd60a", fontWeight: 700, letterSpacing: "0.2em", fontSize: "1rem" }}>
+              {roomCode}
+            </div>
+          </div>
+
+          <div style={{ marginTop: "1.5rem", borderTop: "1px solid #1a1a1a", paddingTop: "1rem" }}>
+            <div style={labelStyle}>CONTROLS</div>
+            <div style={{ color: "#333", fontSize: "0.7rem", lineHeight: 1.8 }}>
+              ↑ ↓ ← →<br />or W A S D
+            </div>
+          </div>
+        </div>
+
+        <div>
+          <GameBoard roomCode={roomCode} />
+        </div>
+
+        <div style={panelStyle}>
+          <div style={labelStyle}>SCOREBOARD</div>
+
+          <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "flex", flexDirection: "column", gap: 8 }}>
+            {sortedPlayers.map((p, rank) => (
+              <li
+                key={p.id}
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  padding: "8px 10px",
+                  background: rank === 0 ? "#1a1500" : "#0d0d16",
+                  border: `1px solid ${rank === 0 ? "#ffd60a22" : "#111"}`,
+                  borderRadius: "3px",
+                  opacity: p.alive ? 1 : 0.5
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "center" }}>
+                  <span style={{ color: "#444", fontSize: "0.7rem", width: 18 }}>
+                    #{rank + 1}
+                  </span>
+                  {colorDot(p.color, p.alive)}
+                  <span style={{ fontSize: "0.8rem" }}>{p.name}</span>
+                </div>
+
+                <span style={{ fontSize: "1rem", fontWeight: 700, color: rank === 0 ? "#ffd60a" : "#00ff88" }}>
+                  {scores[p.id] || 0}
+                </span>
+              </li>
+            ))}
+          </ul>
         </div>
 
       </div>
-
     </div>
   );
 }

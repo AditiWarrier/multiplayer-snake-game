@@ -92,7 +92,6 @@ function socketHandler(io) {
 
       socket.join(roomCode);
       socket.roomCode = roomCode;
-      console.log("JOIN:", socket.id, roomCode, "socket.roomCode SET");
 
       socket.emit("roomCreated", roomCode);
       broadcastState(io, roomCode);
@@ -100,27 +99,18 @@ function socketHandler(io) {
 
     socket.on("joinRoom", (roomCode) => {
       const room = rooms[roomCode];
-      if (!room) {
-        console.log("JOIN ROOM FAILED: Room not found", socket.id, roomCode);
-        return;
-      }
+      if (!room) return;
 
-      // Already a player — just re-join the socket.io room (page navigation)
       if (room.players.some(p => p.id === socket.id)) {
-        console.log("RE-JOIN EXISTING:", socket.id, roomCode);
         socket.join(roomCode);
         socket.roomCode = roomCode;
         broadcastState(io, roomCode);
         return;
       }
 
-      if (room.players.length >= 4) {
-        console.log("JOIN ROOM FAILED: Room full", socket.id, roomCode);
-        return;
-      }
+      if (room.players.length >= 4) return;
 
       const colorIndex = room.players.length;
-      console.log("NEW PLAYER JOIN:", socket.id, roomCode, "COLOR:", colorIndex);
 
       room.players.push({ id: socket.id, colorIndex });
 
@@ -132,65 +122,34 @@ function socketHandler(io) {
       };
 
       room.scores[socket.id] = 0;
-      console.log("SNAKES AFTER JOIN:", Object.keys(room.snakes));
 
       socket.join(roomCode);
       socket.roomCode = roomCode;
-      console.log("JOIN:", socket.id, roomCode, "socket.roomCode SET");
 
       broadcastState(io, roomCode);
     });
 
     socket.on("getState", (roomCode) => {
       const room = rooms[roomCode];
-      if (!room) {
-        console.log("GET STATE FAILED: Room not found", socket.id, roomCode);
-        return;
-      }
+      if (!room) return;
 
-      console.log("GET STATE:", socket.id, roomCode, "CURRENT SNAKES:", Object.keys(room.snakes));
-
-      // Re-join socket.io room (handles page navigation losing context)
       socket.join(roomCode);
       socket.roomCode = roomCode;
-      console.log("GET STATE - JOINED ROOM:", socket.id, roomCode);
 
-      // If socket is a known player but snake is missing, restore it
-      const playerEntry = room.players.find(p => p.id === socket.id);
-      if (playerEntry && !room.snakes[socket.id]) {
-        console.log("RESTORING MISSING SNAKE FOR:", socket.id);
-        room.snakes[socket.id] = {
-          body: [getStartPositions()[playerEntry.colorIndex]],
-          direction: "RIGHT",
-          color: getColor(playerEntry.colorIndex),
-          alive: !room.started // If game started, dead snake; otherwise alive
-        };
-        room.scores[socket.id] = room.scores[socket.id] || 0;
-        console.log("SNAKES AFTER RESTORE:", Object.keys(room.snakes));
-      }
-
-      // Broadcast to everyone so all boards refresh
       broadcastState(io, roomCode);
     });
 
     socket.on("move", (direction) => {
       const room = rooms[socket.roomCode];
-      if (!room) {
-        console.log("MOVE FAILED: No room for socket", socket.id, socket.roomCode);
-        return;
-      }
+      if (!room) return;
 
       const snake = room.snakes[socket.id];
-      if (!snake || !snake.alive) {
-        console.log("MOVE FAILED: No snake or dead", socket.id);
-        return;
-      }
+      if (!snake || !snake.alive) return;
 
       const opposites = { UP: "DOWN", DOWN: "UP", LEFT: "RIGHT", RIGHT: "LEFT" };
 
       if (opposites[direction] !== snake.direction) {
         snake.direction = direction;
-        console.log("MOVE:", socket.id, direction, "ROOM:", socket.roomCode);
       }
     });
 
@@ -198,19 +157,26 @@ function socketHandler(io) {
       const room = rooms[roomCode];
       if (!room || room.interval) return;
 
-      console.log("START GAME:", roomCode, "SNAKES IN GAME:", Object.keys(room.snakes));
       room.started = true;
+      room.tickCount = 0;
+      room.lastDeathTick = false;
 
       io.to(roomCode).emit("gameStarted");
-
-// 🔥 FORCE FULL STATE PUSH IMMEDIATELY
-broadcastState(io, roomCode);
+      broadcastState(io, roomCode);
 
       room.interval = setInterval(() => {
-        console.log("LOOP PLAYERS:", Object.keys(room.snakes));
-        const deaths = [];
-        console.log("GAME LOOP TICK - SNAKES:", Object.keys(room.snakes));
 
+        room.tickCount++;
+
+        if (room.tickCount === 1) {
+          broadcastState(io, roomCode);
+          return;
+        }
+
+        const deaths = [];
+
+        // STEP 1: Compute next head positions for all alive snakes
+        const nextHeads = {};
         for (const id in room.snakes) {
           const snake = room.snakes[id];
           if (!snake.alive) continue;
@@ -222,8 +188,44 @@ broadcastState(io, roomCode);
           if (snake.direction === "LEFT") head.x -= 1;
           if (snake.direction === "RIGHT") head.x += 1;
 
-          head.x = (head.x + GRID_SIZE) % GRID_SIZE;
-          head.y = (head.y + GRID_SIZE) % GRID_SIZE;
+          // WALL COLLISION
+          if (
+            head.x < 0 ||
+            head.x >= GRID_SIZE ||
+            head.y < 0 ||
+            head.y >= GRID_SIZE
+          ) {
+            deaths.push(id);
+            continue;
+          }
+
+          nextHeads[id] = head;
+        }
+
+        // STEP 2: Detect head-to-head collisions
+        const positionMap = {};
+        for (const id in nextHeads) {
+          const pos = nextHeads[id];
+          const key = `${pos.x},${pos.y}`;
+          if (!positionMap[key]) {
+            positionMap[key] = [];
+          }
+          positionMap[key].push(id);
+        }
+
+        // STEP 3: Add all snakes in same position to deaths
+        for (const key in positionMap) {
+          if (positionMap[key].length > 1) {
+            deaths.push(...positionMap[key]);
+          }
+        }
+
+        // STEP 4: Process remaining collision logic
+        for (const id in nextHeads) {
+          if (deaths.includes(id)) continue; // Skip already dead snakes
+
+          const head = nextHeads[id];
+          const snake = room.snakes[id];
 
           const selfHit = snake.body.slice(1).some(b => b.x === head.x && b.y === head.y);
 
@@ -232,6 +234,7 @@ broadcastState(io, roomCode);
             if (otherId === id) continue;
             const other = room.snakes[otherId];
             if (!other.alive) continue;
+
             if (other.body.some(b => b.x === head.x && b.y === head.y)) {
               otherHit = true;
               break;
@@ -262,16 +265,30 @@ broadcastState(io, roomCode);
           snake.body = [];
         });
 
+        if (deaths.length > 0) {
+          room.lastDeathTick = true;
+        }
+
         const alive = Object.keys(room.snakes).filter(id => room.snakes[id].alive);
 
-        if (alive.length <= 1 && Object.keys(room.snakes).length > 1) {
-          room.gameOver = true;
-          room.winner = alive[0] || null;
+        if (room.lastDeathTick) {
+          room.lastDeathTick = false;
+
+          if (alive.length === 1 && Object.keys(room.snakes).length > 1) {
+            room.gameOver = true;
+            room.winner = alive[0];
+
+            clearInterval(room.interval);
+            room.interval = null;
+
+            broadcastState(io, roomCode);
+            return;
+          }
         }
 
         broadcastState(io, roomCode);
 
-      }, 150);
+      }, 400);
     });
 
     socket.on("leaveRoom", (roomCode) => {
@@ -281,7 +298,6 @@ broadcastState(io, roomCode);
       socket.leave(roomCode);
       socket.roomCode = null;
 
-      // Remove player from room if they're in it
       const playerIndex = room.players.findIndex(p => p.id === socket.id);
       if (playerIndex !== -1) {
         room.players.splice(playerIndex, 1);
@@ -292,11 +308,8 @@ broadcastState(io, roomCode);
       broadcastState(io, roomCode);
 
       if (room.players.length === 0) {
-        console.log("Room empty, delaying deletion:", roomCode);
-
         setTimeout(() => {
           if (rooms[roomCode] && rooms[roomCode].players.length === 0) {
-            console.log("Deleting room after delay:", roomCode);
             clearInterval(rooms[roomCode].interval);
             delete rooms[roomCode];
           }
@@ -316,11 +329,8 @@ broadcastState(io, roomCode);
       broadcastState(io, roomCode);
 
       if (room.players.length === 0) {
-        console.log("Room empty, delaying deletion:", roomCode);
-
         setTimeout(() => {
           if (rooms[roomCode] && rooms[roomCode].players.length === 0) {
-            console.log("Deleting room after delay:", roomCode);
             clearInterval(rooms[roomCode].interval);
             delete rooms[roomCode];
           }
