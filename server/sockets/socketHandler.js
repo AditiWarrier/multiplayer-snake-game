@@ -10,12 +10,15 @@ function getColor(index) {
 function generateRoomCode() {
   const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
   let code = "";
-  for (let i = 0; i < 5; i++) code += chars[Math.floor(Math.random() * chars.length)];
+  for (let i = 0; i < 5; i++) {
+    code += chars[Math.floor(Math.random() * chars.length)];
+  }
   return code;
 }
 
 function spawnFood(room) {
   let pos;
+
   do {
     pos = {
       x: Math.floor(Math.random() * GRID_SIZE),
@@ -23,9 +26,11 @@ function spawnFood(room) {
     };
   } while (
     Object.values(room.snakes).some(s =>
-      s.alive && s.body.some(b => b.x === pos.x && b.y === pos.y)
+      s.alive &&
+      s.body.some(b => b.x === pos.x && b.y === pos.y)
     )
   );
+
   return pos;
 }
 
@@ -40,32 +45,37 @@ function getStartPositions() {
 
 function broadcastState(io, roomCode) {
   const room = rooms[roomCode];
+
   if (!room) {
-    console.log("BROADCAST FAILED: Room not found", roomCode);
+    console.log("BROADCAST FAILED:", roomCode);
     return;
   }
 
-  const state = {
+  io.to(roomCode).emit("gameState", {
     snakes: room.snakes,
     food: room.food,
     foodTrail: room.foodTrail || [],
     scores: room.scores,
     gameOver: room.gameOver,
     winner: room.winner
-  };
-
-  console.log("EMIT STATE:", roomCode, "SNAKES:", Object.keys(room.snakes), "PLAYERS:", room.players.length);
-  io.to(roomCode).emit("gameState", state);
+  });
 }
 
 function socketHandler(io) {
+
   io.on("connection", (socket) => {
-    console.log("Connected:", socket.id);
+
+    console.log("CONNECTED:", socket.id);
+
     socket.roomCode = null;
 
+    // =====================================================
+    // CREATE ROOM
+    // =====================================================
+
     socket.on("createRoom", () => {
+
       const roomCode = generateRoomCode();
-      console.log("CREATE ROOM:", socket.id, roomCode);
 
       rooms[roomCode] = {
         players: [],
@@ -79,7 +89,10 @@ function socketHandler(io) {
         foodTrail: []
       };
 
-      rooms[roomCode].players.push({ id: socket.id, colorIndex: 0 });
+      rooms[roomCode].players.push({
+        id: socket.id,
+        colorIndex: 0
+      });
 
       rooms[roomCode].snakes[socket.id] = {
         body: [getStartPositions()[0]],
@@ -94,17 +107,28 @@ function socketHandler(io) {
       socket.roomCode = roomCode;
 
       socket.emit("roomCreated", roomCode);
+
       broadcastState(io, roomCode);
     });
 
+    // =====================================================
+    // JOIN ROOM
+    // =====================================================
+
     socket.on("joinRoom", (roomCode) => {
+
       const room = rooms[roomCode];
+
       if (!room) return;
 
+      // Rejoin existing
       if (room.players.some(p => p.id === socket.id)) {
+
         socket.join(roomCode);
         socket.roomCode = roomCode;
+
         broadcastState(io, roomCode);
+
         return;
       }
 
@@ -112,7 +136,10 @@ function socketHandler(io) {
 
       const colorIndex = room.players.length;
 
-      room.players.push({ id: socket.id, colorIndex });
+      room.players.push({
+        id: socket.id,
+        colorIndex
+      });
 
       room.snakes[socket.id] = {
         body: [getStartPositions()[colorIndex]],
@@ -129,8 +156,14 @@ function socketHandler(io) {
       broadcastState(io, roomCode);
     });
 
+    // =====================================================
+    // GET STATE
+    // =====================================================
+
     socket.on("getState", (roomCode) => {
+
       const room = rooms[roomCode];
+
       if (!room) return;
 
       socket.join(roomCode);
@@ -139,22 +172,40 @@ function socketHandler(io) {
       broadcastState(io, roomCode);
     });
 
+    // =====================================================
+    // MOVE
+    // =====================================================
+
     socket.on("move", (direction) => {
+
       const room = rooms[socket.roomCode];
+
       if (!room) return;
 
       const snake = room.snakes[socket.id];
+
       if (!snake || !snake.alive) return;
 
-      const opposites = { UP: "DOWN", DOWN: "UP", LEFT: "RIGHT", RIGHT: "LEFT" };
+      const opposites = {
+        UP: "DOWN",
+        DOWN: "UP",
+        LEFT: "RIGHT",
+        RIGHT: "LEFT"
+      };
 
       if (opposites[direction] !== snake.direction) {
         snake.direction = direction;
       }
     });
 
+    // =====================================================
+    // START GAME
+    // =====================================================
+
     socket.on("startGame", (roomCode) => {
+
       const room = rooms[roomCode];
+
       if (!room || room.interval) return;
 
       room.started = true;
@@ -162,145 +213,212 @@ function socketHandler(io) {
       room.lastDeathTick = false;
 
       io.to(roomCode).emit("gameStarted");
+
       broadcastState(io, roomCode);
 
-      room.interval = setInterval(() => {
+      // ✅ REAL COUNTDOWN DELAY
+      setTimeout(() => {
 
-        room.tickCount++;
+        room.interval = setInterval(() => {
 
-        if (room.tickCount === 1) {
-          broadcastState(io, roomCode);
-          return;
-        }
+          room.tickCount++;
 
-        const deaths = [];
+          const deaths = [];
 
-        // STEP 1: Compute next head positions for all alive snakes
-        const nextHeads = {};
-        for (const id in room.snakes) {
-          const snake = room.snakes[id];
-          if (!snake.alive) continue;
+          // =========================================
+          // STEP 1: NEXT HEAD POSITIONS
+          // =========================================
 
-          const head = { ...snake.body[0] };
+          const nextHeads = {};
 
-          if (snake.direction === "UP") head.y -= 1;
-          if (snake.direction === "DOWN") head.y += 1;
-          if (snake.direction === "LEFT") head.x -= 1;
-          if (snake.direction === "RIGHT") head.x += 1;
+          for (const id in room.snakes) {
 
-          // WALL COLLISION
-          if (
-            head.x < 0 ||
-            head.x >= GRID_SIZE ||
-            head.y < 0 ||
-            head.y >= GRID_SIZE
-          ) {
-            deaths.push(id);
-            continue;
+            const snake = room.snakes[id];
+
+            if (!snake.alive) continue;
+
+            const head = { ...snake.body[0] };
+
+            if (snake.direction === "UP") head.y -= 1;
+            if (snake.direction === "DOWN") head.y += 1;
+            if (snake.direction === "LEFT") head.x -= 1;
+            if (snake.direction === "RIGHT") head.x += 1;
+
+            // WALL COLLISION
+            if (
+              head.x < 0 ||
+              head.x >= GRID_SIZE ||
+              head.y < 0 ||
+              head.y >= GRID_SIZE
+            ) {
+              deaths.push(id);
+              continue;
+            }
+
+            nextHeads[id] = head;
           }
 
-          nextHeads[id] = head;
-        }
+          // =========================================
+          // STEP 2: HEAD TO HEAD
+          // =========================================
 
-        // STEP 2: Detect head-to-head collisions
-        const positionMap = {};
-        for (const id in nextHeads) {
-          const pos = nextHeads[id];
-          const key = `${pos.x},${pos.y}`;
-          if (!positionMap[key]) {
-            positionMap[key] = [];
+          const positionMap = {};
+
+          for (const id in nextHeads) {
+
+            const pos = nextHeads[id];
+
+            const key = `${pos.x},${pos.y}`;
+
+            if (!positionMap[key]) {
+              positionMap[key] = [];
+            }
+
+            positionMap[key].push(id);
           }
-          positionMap[key].push(id);
-        }
 
-        // STEP 3: Add all snakes in same position to deaths
-        for (const key in positionMap) {
-          if (positionMap[key].length > 1) {
-            deaths.push(...positionMap[key]);
-          }
-        }
+          for (const key in positionMap) {
 
-        // STEP 4: Process remaining collision logic
-        for (const id in nextHeads) {
-          if (deaths.includes(id)) continue; // Skip already dead snakes
-
-          const head = nextHeads[id];
-          const snake = room.snakes[id];
-
-          const selfHit = snake.body.slice(1).some(b => b.x === head.x && b.y === head.y);
-
-          let otherHit = false;
-          for (const otherId in room.snakes) {
-            if (otherId === id) continue;
-            const other = room.snakes[otherId];
-            if (!other.alive) continue;
-
-            if (other.body.some(b => b.x === head.x && b.y === head.y)) {
-              otherHit = true;
-              break;
+            if (positionMap[key].length > 1) {
+              deaths.push(...positionMap[key]);
             }
           }
 
-          if (selfHit || otherHit) {
-            deaths.push(id);
-            continue;
+          // =========================================
+          // STEP 3: BODY COLLISIONS
+          // =========================================
+
+          for (const id in nextHeads) {
+
+            if (deaths.includes(id)) continue;
+
+            const head = nextHeads[id];
+            const snake = room.snakes[id];
+
+            const selfHit = snake.body
+              .slice(1)
+              .some(b => b.x === head.x && b.y === head.y);
+
+            let otherHit = false;
+
+            for (const otherId in room.snakes) {
+
+              if (otherId === id) continue;
+
+              const other = room.snakes[otherId];
+
+              if (!other.alive) continue;
+
+              if (
+                other.body.some(
+                  b => b.x === head.x && b.y === head.y
+                )
+              ) {
+                otherHit = true;
+                break;
+              }
+            }
+
+            if (selfHit || otherHit) {
+              deaths.push(id);
+              continue;
+            }
+
+            snake.body.unshift(head);
+
+            // FOOD
+            if (
+              head.x === room.food.x &&
+              head.y === room.food.y
+            ) {
+
+              room.scores[id] += 1;
+
+              room.food = spawnFood(room);
+
+            } else {
+
+              snake.body.pop();
+            }
           }
 
-          snake.body.unshift(head);
+          // =========================================
+          // STEP 4: APPLY DEATHS
+          // =========================================
 
-          if (head.x === room.food.x && head.y === room.food.y) {
-            room.scores[id] += 1;
-            room.food = spawnFood(room);
-          } else {
-            snake.body.pop();
-          }
-        }
+          deaths.forEach(id => {
 
-        deaths.forEach(id => {
-          const snake = room.snakes[id];
-          snake.alive = false;
-          snake.body.forEach((seg, i) => {
-            if (i % 2 === 0) room.foodTrail.push(seg);
+            const snake = room.snakes[id];
+
+            if (!snake) return;
+
+            snake.alive = false;
+
+            snake.body.forEach((seg, i) => {
+
+              if (i % 2 === 0) {
+                room.foodTrail.push(seg);
+              }
+            });
+
+            snake.body = [];
           });
-          snake.body = [];
-        });
 
-        if (deaths.length > 0) {
-          room.lastDeathTick = true;
-        }
+          // =========================================
+          // STEP 5: GAME OVER
+          // =========================================
 
-        const alive = Object.keys(room.snakes).filter(id => room.snakes[id].alive);
+          const alive = Object.keys(room.snakes)
+            .filter(id => room.snakes[id].alive);
 
-        if (room.lastDeathTick) {
-          room.lastDeathTick = false;
+          // ✅ ONLY end when ONE snake remains
+          if (
+            alive.length === 1 &&
+            Object.keys(room.snakes).length > 1
+          ) {
 
-          if (alive.length === 1 && Object.keys(room.snakes).length > 1) {
             room.gameOver = true;
             room.winner = alive[0];
 
             clearInterval(room.interval);
+
             room.interval = null;
 
             broadcastState(io, roomCode);
+
             return;
           }
-        }
 
-        broadcastState(io, roomCode);
+          broadcastState(io, roomCode);
 
-      }, 200);
+        }, 200);
+
+      }, 3000); // ✅ 3 SECOND COUNTDOWN
     });
 
+    // =====================================================
+    // LEAVE ROOM
+    // =====================================================
+
     socket.on("leaveRoom", (roomCode) => {
+
       const room = rooms[roomCode];
+
       if (!room) return;
 
       socket.leave(roomCode);
+
       socket.roomCode = null;
 
-      const playerIndex = room.players.findIndex(p => p.id === socket.id);
+      const playerIndex =
+        room.players.findIndex(
+          p => p.id === socket.id
+        );
+
       if (playerIndex !== -1) {
+
         room.players.splice(playerIndex, 1);
+
         delete room.snakes[socket.id];
         delete room.scores[socket.id];
       }
@@ -308,32 +426,59 @@ function socketHandler(io) {
       broadcastState(io, roomCode);
 
       if (room.players.length === 0) {
+
         setTimeout(() => {
-          if (rooms[roomCode] && rooms[roomCode].players.length === 0) {
+
+          if (
+            rooms[roomCode] &&
+            rooms[roomCode].players.length === 0
+          ) {
+
             clearInterval(rooms[roomCode].interval);
+
             delete rooms[roomCode];
           }
+
         }, 10000);
       }
     });
 
+    // =====================================================
+    // DISCONNECT
+    // =====================================================
+
     socket.on("disconnect", () => {
+
       const roomCode = socket.roomCode;
+
       const room = rooms[roomCode];
+
       if (!room) return;
 
       delete room.snakes[socket.id];
       delete room.scores[socket.id];
-      room.players = room.players.filter(p => p.id !== socket.id);
+
+      room.players =
+        room.players.filter(
+          p => p.id !== socket.id
+        );
 
       broadcastState(io, roomCode);
 
       if (room.players.length === 0) {
+
         setTimeout(() => {
-          if (rooms[roomCode] && rooms[roomCode].players.length === 0) {
+
+          if (
+            rooms[roomCode] &&
+            rooms[roomCode].players.length === 0
+          ) {
+
             clearInterval(rooms[roomCode].interval);
+
             delete rooms[roomCode];
           }
+
         }, 10000);
       }
     });
