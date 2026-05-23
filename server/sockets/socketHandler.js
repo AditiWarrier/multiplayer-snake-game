@@ -288,7 +288,7 @@ function socketHandler(io) {
 
         broadcastState(io, roomCode);
 
-      }, 400);
+      }, 200);
     });
 
     socket.on("leaveRoom", (roomCode) => {
