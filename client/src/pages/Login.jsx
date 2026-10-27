@@ -196,9 +196,11 @@ export default function Login() {
               height: "1350px",
 
               right: "-180px",
-              top: "-300px",
+              top: "-500px",
 
               zIndex: 1,
+
+              pointerEvents: "none",
 
               opacity: 0.98,
 
