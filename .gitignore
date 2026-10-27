@@ -1,8 +1,10 @@
 # Node modules
 node_modules/
 
-# Environment variables
+# Environment variables (never commit secrets)
 .env
+.env.*
+!.env.example
 
 # Logs
 logs
