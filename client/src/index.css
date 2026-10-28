@@ -138,6 +138,92 @@ body {
 }
 
 /* ================================================= */
+/* REGISTER PAGE */
+/* ================================================= */
+
+.register-page {
+  min-height: 100vh;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  padding: 3rem 6%;
+  color: #fff;
+}
+
+.register-glow {
+  position: absolute;
+  width: 34rem;
+  height: 34rem;
+  border-radius: 50%;
+  filter: blur(140px);
+  pointer-events: none;
+}
+
+.register-glow-red { top: -16rem; left: -12rem; background: #ff3c5a22; }
+.register-glow-white { right: -14rem; bottom: -17rem; background: #ffffff10; }
+
+.register-layout {
+  width: min(100%, 1060px);
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(340px, 460px);
+  align-items: center;
+  gap: clamp(2rem, 7vw, 7rem);
+}
+
+.register-heading h1 {
+  font-size: clamp(3.1rem, 6vw, 5.4rem);
+  font-weight: 900;
+  line-height: 0.98;
+  letter-spacing: 0.08em;
+}
+
+.register-kicker, .register-index {
+  color: #ff6b81;
+  font-size: 0.72rem;
+  letter-spacing: 0.2em;
+  font-weight: 700;
+}
+
+.register-kicker { margin-bottom: 1.4rem; }
+.register-caption { color: #777; margin-top: 1.8rem; letter-spacing: 0.24em; font-size: 0.72rem; }
+
+.register-card {
+  width: 100%;
+  padding: clamp(1.5rem, 4vw, 2.5rem);
+  border-radius: 26px;
+  z-index: 1;
+}
+
+.register-card-heading { margin-bottom: 1.5rem; }
+.register-card-heading h2 { margin-top: 0.55rem; font-size: 1.15rem; letter-spacing: 0.1em; }
+.register-fields { display: flex; flex-direction: column; gap: 0.9rem; }
+
+.register-fields .auth-input {
+  background: rgba(12, 12, 20, 0.9);
+  color: #f4f4f7;
+  border-color: #343440;
+}
+
+.register-fields .auth-input::placeholder { color: #858592; }
+.register-fields .auth-input:focus { border-color: #ff3c5a; box-shadow: 0 0 12px rgba(255,60,90,0.35); }
+.register-login-prompt { color: #777; margin-top: 1.4rem; text-align: center; font-size: 0.82rem; }
+.register-login-link { color: #ff3c5a; text-decoration: none; font-weight: 700; }
+.register-login-link:hover { text-decoration: underline; }
+
+@media (max-width: 720px) {
+  .register-page { padding: 2rem 1.1rem; }
+  .register-layout { max-width: 460px; grid-template-columns: minmax(0, 1fr); gap: 1.5rem; }
+  .register-heading { text-align: center; }
+  .register-kicker { margin-bottom: 0.7rem; }
+  .register-heading h1 { font-size: clamp(2.5rem, 12vw, 3.7rem); }
+  .register-caption { margin-top: 0.8rem; }
+}
+
+/* ================================================= */
 /* REAL SNAKE IMAGE */
 /* ================================================= */
 

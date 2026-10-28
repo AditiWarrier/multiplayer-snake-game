@@ -13,7 +13,7 @@ export default function Login() {
     try {
 
       const res = await fetch(
-        "http://localhost:5000/api/auth/login",
+        `${import.meta.env.VITE_API_URL || "http://localhost:5000"}/api/auth/login`,
         {
           method: "POST",
           headers: {
@@ -196,9 +196,11 @@ export default function Login() {
               height: "1350px",
 
               right: "-180px",
-              top: "-300px",
+              top: "-500px",
 
               zIndex: 1,
+
+              pointerEvents: "none",
 
               opacity: 0.98,
 

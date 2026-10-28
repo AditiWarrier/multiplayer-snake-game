@@ -1,11 +1,12 @@
 import { useState, useEffect } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import Navbar from "../components/Navbar";
 import socket from "../socket";
 
 export default function Room() {
 
   const [searchParams] = useSearchParams();
+  const navigate = useNavigate();
 
   const roomCode = searchParams.get("code");
 
@@ -41,7 +42,7 @@ export default function Room() {
     };
 
     const handleGameStarted = () => {
-      window.location.href = `/game?code=${roomCode}`;
+      navigate(`/game?code=${roomCode}`);
     };
 
     socket.on("gameState", handleGameState);
@@ -53,7 +54,7 @@ export default function Room() {
       socket.off("gameStarted", handleGameStarted);
     };
 
-  }, [roomCode]);
+  }, [navigate, roomCode]);
 
   // 🔥 PULSE EFFECT
   useEffect(() => {
