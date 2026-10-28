@@ -24,6 +24,8 @@ export default function Room() {
 
     const handleGameState = (state) => {
 
+      if (state.roomCode !== roomCode) return;
+
       const snakeIds = Object.keys(state.snakes || {});
 
       setPlayers(

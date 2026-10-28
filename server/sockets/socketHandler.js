@@ -52,6 +52,7 @@ function broadcastState(io, roomCode) {
   }
 
   io.to(roomCode).emit("gameState", {
+    roomCode,
     snakes: room.snakes,
     food: room.food,
     foodTrail: room.foodTrail || [],
@@ -59,6 +60,35 @@ function broadcastState(io, roomCode) {
     gameOver: room.gameOver,
     winner: room.winner
   });
+}
+
+function removeSocketFromRoom(io, socket, roomCode) {
+  const room = rooms[roomCode];
+
+  socket.leave(roomCode);
+
+  if (room) {
+    const playerIndex = room.players.findIndex(player => player.id === socket.id);
+
+    if (playerIndex !== -1) {
+      room.players.splice(playerIndex, 1);
+      delete room.snakes[socket.id];
+      delete room.scores[socket.id];
+    }
+
+    broadcastState(io, roomCode);
+
+    if (room.players.length === 0) {
+      setTimeout(() => {
+        if (rooms[roomCode] === room && room.players.length === 0) {
+          clearInterval(room.interval);
+          delete rooms[roomCode];
+        }
+      }, 10000);
+    }
+  }
+
+  if (socket.roomCode === roomCode) socket.roomCode = null;
 }
 
 function socketHandler(io) {
@@ -74,6 +104,10 @@ function socketHandler(io) {
     // =====================================================
 
     socket.on("createRoom", () => {
+
+      if (socket.roomCode) {
+        removeSocketFromRoom(io, socket, socket.roomCode);
+      }
 
       const roomCode = generateRoomCode();
 
@@ -121,8 +155,16 @@ function socketHandler(io) {
 
       if (!room) return;
 
+      const existingPlayer = room.players.some(p => p.id === socket.id);
+
+      if (!existingPlayer && room.players.length >= 4) return;
+
+      if (socket.roomCode && socket.roomCode !== roomCode) {
+        removeSocketFromRoom(io, socket, socket.roomCode);
+      }
+
       // Rejoin existing
-      if (room.players.some(p => p.id === socket.id)) {
+      if (existingPlayer) {
 
         socket.join(roomCode);
         socket.roomCode = roomCode;
@@ -131,8 +173,6 @@ function socketHandler(io) {
 
         return;
       }
-
-      if (room.players.length >= 4) return;
 
       const colorIndex = room.players.length;
 
